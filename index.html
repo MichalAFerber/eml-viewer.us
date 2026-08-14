@@ -311,6 +311,18 @@
   }
   .toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
 
+  /* ---------- Family router offer card (§6.10) ---------- */
+  .route-backdrop{ position:fixed; inset:0; background:var(--shadow); z-index:84 }
+  .route-card{ position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:85;
+    background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:16px;
+    box-shadow:0 12px 40px var(--shadow); padding:1.1rem 1.25rem; width:min(92vw,26rem) }
+    .route-card p { margin: 0; overflow-wrap: anywhere; }
+  .route-sub{ color:var(--muted); font-size:.85rem; margin-top:.35rem }
+  .route-actions{ display:flex; gap:.5rem; justify-content:flex-end; margin-top:.9rem }
+  .route-actions button{ border-radius:9px; padding:.55rem .9rem; font:inherit; cursor:pointer }
+  .route-go{ background:var(--accent); color:var(--accent-contrast); border:1px solid var(--accent) }
+  .route-dismiss{ background:transparent; color:var(--text); border:1px solid var(--border) }
+
   @media (min-width:640px){ .topbar{padding-left:1rem; padding-right:1rem} .codewrap{font-size:.86rem} }
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -404,6 +416,16 @@
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<div class="route-backdrop" id="routeBackdrop" hidden></div>
+<div class="route-card" id="routeCard" role="alertdialog" aria-modal="true" aria-labelledby="routeMsg" aria-describedby="routeSub" hidden>
+  <p id="routeMsg"></p>
+  <p class="route-sub" id="routeSub" aria-live="polite">Your file stays on this device — nothing is uploaded.</p>
+  <div class="route-actions">
+    <button type="button" class="route-go" id="routeGo"></button>
+    <button type="button" class="route-dismiss" id="routeDismiss">Not now</button>
+  </div>
+</div>
 <input id="fileInput" type="file" accept=".json,.jsonc,.json5,.jsonld,.ndjson,.yaml,.yml,.toml,.csv,.tsv,.xml,.rss,.atom,.graphql,.gql,application/json,application/xml,text/csv,text/*" hidden>
 
 <script>
@@ -2335,7 +2357,7 @@ return He}()
   }
   function readFile(file){
     if (!file) return;
-    if (!isAccepted(file.name)){ toast("“" + file.name + "” isn’t a supported email file"); return; }
+    if (!isAccepted(file.name)){ if (!familyRoute(file)) toast("“" + file.name + "” isn’t a supported email file"); return; }
     var reader = new FileReader();
     reader.onload = function(e){
       var buf = new Uint8Array(e.target.result);
@@ -2446,7 +2468,18 @@ return He}()
   function setNav(open){ body.classList.toggle("nav-open", open); btnMenu.setAttribute("aria-expanded", open ? "true" : "false"); }
   btnMenu.addEventListener("click", function(){ setNav(!body.classList.contains("nav-open")); });
   navBackdrop.addEventListener("click", function(){ setNav(false); });
-  doc.addEventListener("keydown", function(e){ if (e.key === "Escape") setNav(false); });
+  doc.addEventListener("keydown", function(e){
+    if (!id("routeCard").hidden){   // §6.10: the modal offer card claims Escape and Tab while open
+      if (e.key === "Escape"){ hideRouteCard(); return; }
+      if (e.key === "Tab"){
+        e.preventDefault();
+        var go = id("routeGo"), no = id("routeDismiss");
+        (doc.activeElement === go || go.disabled ? no : go).focus();
+      }
+      return;
+    }
+    if (e.key === "Escape") setNav(false);
+  });
 
   // ---------- Background color (remembered) ----------
   function setCookie(name, val){ doc.cookie = name + "=" + encodeURIComponent(val) + "; max-age=31536000; path=/; SameSite=Lax"; }
@@ -2512,6 +2545,163 @@ return He}()
     if (cd.files && cd.files.length){ e.preventDefault(); readFile(cd.files[0]); return; }
     var txt = cd.getData && cd.getData("text"); if (txt){ e.preventDefault(); show(txt, ""); }
   });
+
+  // ---------- Family router (§6.10): sibling-viewer redirect offer + in-browser hand-off ----------
+    /* FV-MAP-START — generated from family-map.json (canonical); deep-equality enforced by the harness */
+    var FAMILY = {
+      cert:     { domain:"cert-viewer.us"      , label:"Cert Viewer"      , kind:"a certificate" },
+      data:     { domain:"data-viewer.us"      , label:"Data Viewer"      , kind:"a data file" },
+      docx:     { domain:"docx-viewer.us"      , label:"DOCX Viewer"      , kind:"a Word document" },
+      eml:      { domain:"eml-viewer.us"       , label:"EML Viewer"       , kind:"an email file" },
+      epub:     { domain:"epub-viewer.us"      , label:"EPUB Viewer"      , kind:"an e-book" },
+      html:     { domain:"html-viewer.us"      , label:"HTML Viewer"      , kind:"a web or source-code file" },
+      image:    { domain:"image-viewer.us"     , label:"Image Viewer"     , kind:"an image" },
+      log:      { domain:"log-viewer.us"       , label:"Log Viewer"       , kind:"a log file" },
+      markdown: { domain:"markdown-viewer.us"  , label:"Markdown Viewer"  , kind:"a Markdown or text file" },
+      pdf:      { domain:"pdf-viewer.us"       , label:"PDF Viewer"       , kind:"a PDF" },
+      pptx:     { domain:"pptx-viewer.us"      , label:"PPTX Viewer"      , kind:"a presentation" },
+      pub:      { domain:"pub-viewer.us"       , label:"PUB Viewer"       , kind:"a Publisher file" },
+      sheets:   { domain:"sheets-viewer.us"    , label:"Sheets Viewer"    , kind:"a spreadsheet" }
+    };
+    var FAMILY_HUB = "file-viewer.us";
+    var FAMILY_NAMES = {"robots.txt":"html"};
+    var FAMILY_MAP = {
+      // sheets
+      "123":"sheets", xlsx:"sheets", xlsm:"sheets", xlsb:"sheets", xls:"sheets", xlt:"sheets", xltx:"sheets", xltm:"sheets",
+      xlam:"sheets", ods:"sheets", fods:"sheets", dif:"sheets", prn:"sheets", dbf:"sheets", numbers:"sheets", xlml:"sheets",
+      wk1:"sheets", wk3:"sheets", wks:"sheets", et:"sheets", uos:"sheets",
+      // cert
+      pem:"cert", crt:"cert", cer:"cert", der:"cert", csr:"cert", cert:"cert", p7b:"cert", p12:"cert",
+      pfx:"cert",
+      // data
+      json:"data", jsonc:"data", json5:"data", jsonld:"data", ndjson:"data", yaml:"data", yml:"data", toml:"data",
+      csv:"data", tsv:"data", xml:"data", rss:"data", atom:"data", graphql:"data", gql:"data",
+      // docx
+      docx:"docx", docm:"docx", dotx:"docx", dotm:"docx", doc:"docx", dot:"docx", rtf:"docx", odt:"docx",
+      // eml
+      eml:"eml", mbox:"eml", emlx:"eml", msg:"eml",
+      // epub
+      epub:"epub",
+      // html
+      html:"html", htm:"html", xhtml:"html", xht:"html", shtml:"html", shtm:"html", stm:"html", hta:"html",
+      mhtml:"html", mht:"html", css:"html", scss:"html", sass:"html", less:"html", styl:"html", pcss:"html",
+      postcss:"html", js:"html", mjs:"html", cjs:"html", jsx:"html", ts:"html", mts:"html", cts:"html",
+      tsx:"html", coffee:"html", htaccess:"html", htpasswd:"html", env:"html", ini:"html", conf:"html", webmanifest:"html",
+      map:"html", php:"html", phtml:"html", asp:"html", aspx:"html", ascx:"html", cshtml:"html", vbhtml:"html",
+      jsp:"html", jspx:"html", cfm:"html", erb:"html", rhtml:"html", ejs:"html", hbs:"html", handlebars:"html",
+      mustache:"html", njk:"html", liquid:"html", jinja:"html", j2:"html", twig:"html", pug:"html", jade:"html",
+      haml:"html", slim:"html", vue:"html", svelte:"html", astro:"html",
+      // image
+      png:"image", jpg:"image", jpeg:"image", jpe:"image", jfif:"image", gif:"image", webp:"image", avif:"image",
+      svg:"image", svgz:"image", bmp:"image", dib:"image", ico:"image", cur:"image", tif:"image", tiff:"image",
+      tga:"image", targa:"image", icb:"image", vda:"image", vst:"image", qoi:"image", pcx:"image", ppm:"image",
+      pgm:"image", pbm:"image", pnm:"image", pam:"image", ff:"image", dds:"image", heic:"image", heif:"image",
+      jxl:"image", psd:"image",
+      // log
+      log:"log", out:"log", err:"log", trace:"log", syslog:"log",
+      // markdown
+      md:"markdown", markdown:"markdown", mdx:"markdown", txt:"markdown", rst:"markdown", adoc:"markdown",
+      // pdf
+      pdf:"pdf",
+      // pptx
+      pptx:"pptx", pptm:"pptx", ppsx:"pptx", ppsm:"pptx", potx:"pptx", potm:"pptx", ppt:"pptx",
+      // pub
+      pub:"pub"
+    };
+    /* FV-MAP-END */
+    var FAMILY_ORIGINS = Object.keys(FAMILY).map(function (k) { return "https://" + FAMILY[k].domain; })
+      .concat("https://" + FAMILY_HUB);
+  var DOMAIN = "eml-viewer.us";
+
+  function familyRoute(file){
+    var n = String(file && file.name || "").toLowerCase();
+    var key = FAMILY_NAMES[n];
+    if (!key){
+      var i = n.lastIndexOf(".");
+      var ext = i >= 0 ? n.slice(i + 1) : "";
+      key = FAMILY_MAP[ext];
+    }
+    if (!key || FAMILY[key].domain === DOMAIN) return false;  // unknown type, or our own → caller keeps its toast
+    showRouteCard(file, key);
+    return true;
+  }
+
+  var routeFile = null, routeKey = "", routePrevFocus = null, handoff = null;
+  function cancelHandoff(){                    // tear down a pending hand-off (sender below)
+    if (!handoff) return;
+    window.removeEventListener("message", handoff.onMsg);
+    clearTimeout(handoff.timer);
+    handoff = null;
+  }
+  function showRouteCard(file, key){
+    cancelHandoff();                           // a new offer aborts any pending hand-off
+    if (id("routeCard").hidden) routePrevFocus = document.activeElement;  // don't capture our own button
+    routeFile = file; routeKey = key;
+    var t = FAMILY[key];
+    // ⁨…⁩ (FSI…PDI) bidi-isolate the untrusted name so U+202E-style
+    // overrides can't visually reorder the sentence.
+    id("routeMsg").textContent = "“⁨" + file.name + "⁩” looks like " + t.kind + " — it belongs to " + t.label + ".";
+    id("routeGo").textContent = "Open " + t.domain + " ↗";
+    id("routeSub").textContent = "Your file stays on this device — nothing is uploaded.";
+    id("routeGo").disabled = false;
+    id("routeBackdrop").hidden = false; id("routeCard").hidden = false;
+    id("routeGo").focus();
+  }
+  function hideRouteCard(){
+    cancelHandoff();                           // dismissal aborts a pending hand-off
+    id("routeBackdrop").hidden = true; id("routeCard").hidden = true;
+    routeFile = null; routeKey = "";
+    if (routePrevFocus && routePrevFocus.focus) routePrevFocus.focus();
+  }
+
+  id("routeGo").addEventListener("click", function(){
+    if (!routeFile || id("routeGo").disabled) return;               // no double-fire
+    cancelHandoff();
+    var t = FAMILY[routeKey], origin = "https://" + t.domain, file = routeFile;
+    var w = window.open(origin + "/#fvh=" + encodeURIComponent(file.name));
+    if (!w){ id("routeSub").textContent = "Couldn’t open the tab — allow pop-ups for this site and try again."; return; }
+    id("routeGo").disabled = true;
+    var h = {};
+    h.onMsg = function(e){
+      if (e.source !== w || e.origin !== origin || !e.data) return;
+      if (e.data.type === "fv-ready") w.postMessage({ type:"fv-file", file:file }, origin);
+      else if (e.data.type === "fv-ack"){ hideRouteCard(); toast("Sent to " + t.label); }  // hideRouteCard tears the handshake down
+    };
+    h.timer = setTimeout(function(){
+      if (handoff !== h) return;
+      cancelHandoff();
+      id("routeSub").textContent = "Tab opened — drop the file there.";   // Level-1 fallback
+    }, 10000);
+    handoff = h;
+    window.addEventListener("message", h.onMsg);
+  });
+  id("routeDismiss").addEventListener("click", hideRouteCard);
+  id("routeBackdrop").addEventListener("click", hideRouteCard);
+
+  window.addEventListener("message", function(e){
+    if (FAMILY_ORIGINS.indexOf(e.origin) === -1) return;      // family origins only
+    var d = e.data;
+    if (d && d.type === "fv-file" && d.file instanceof File){ // clone re-creates a real File in this realm
+      readFile(d.file);
+      e.source.postMessage({ type:"fv-ack" }, e.origin);      // ack = received and handed to the loader
+    }
+  });
+  var fvh = /[#&]fvh=([^&]*)/.exec(location.hash);
+  if (fvh){
+    var fvhName = fvh[1];                                   // ⚠️ stranger-controlled — textContent only
+    try { fvhName = decodeURIComponent(fvhName); } catch (_) {}  // malformed %-escapes must not abort the receiver
+    history.replaceState(null, "", location.pathname + location.search);  // always clear, opener or not
+    if (window.opener){
+      try { window.opener.postMessage({ type:"fv-ready" }, "*"); } catch(_){}
+      window.opener = null;    // sever the reverse-navigation channel once the ping is out
+      var fvhSub = empty.querySelector(".empty-sub");   // SHOULD: show the pending hand-off; revert after ~10 s
+      if (fvhSub){
+        var fvhSubText = fvhSub.textContent;
+        fvhSub.textContent = "Receiving \u201C\u2068" + fvhName + "\u2069\u201D\u2026";   // textContent only; FSI…PDI isolate the name
+        setTimeout(function(){ fvhSub.textContent = fvhSubText; }, 10000);
+      }
+    }
+  }
 })();
 </script>
 </body>
