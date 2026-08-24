@@ -1,3 +1,3 @@
 User-agent: *
 Allow: /
-Sitemap: https://eml-viewer.us/sitemap.xml
+Sitemap: https://eml-viewer.us/sitemap-index.xml
