@@ -3,8 +3,9 @@
 // standards (§15). Exit 1 on any failure.
 import { chromium } from "playwright";
 import http from "node:http";
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync, statSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const ROOT = process.cwd();
 const PORT = Number(process.env.PORT) || 8099;
@@ -50,6 +51,14 @@ const hook = (page) => {
   page.on("pageerror", (e) => errs.push(String(e)));
 };
 
+// A minimal well-formed .eml: readFile() calls show() (or showMsgNotice()
+// for a compound-binary .msg) on any accepted extension, and show() tries
+// EMLCORE.parseEml() inside its own try/catch, so this is enough to
+// exercise the ?name= write path either way.
+const FIX = mkdtempSync(join(tmpdir(), "eml-harness-"));
+const FIXTURE_EML = join(FIX, "sample.eml");
+writeFileSync(FIXTURE_EML, "From: a@example.com\r\nSubject: Test\r\n\r\nHello.\r\n");
+
 // -- main context: light system scheme, full toggle round-trip
 const ctx = await browser.newContext({ colorScheme: "light", viewport: { width: 1240, height: 800 } });
 const page = await ctx.newPage();
@@ -82,7 +91,36 @@ check("icons in dark mode (moon shown, sun hidden)", await page.evaluate(() => {
 check("choice persists (mykk-bg)", await page.evaluate(() => { try { return localStorage.getItem("mykk-bg") === "#0d1117"; } catch (e) { return false; } }));
 await page.click("#themeToggle");
 check("toggle back to light", await page.evaluate(() => document.getElementById("bgPicker").value) === "#ffffff");
+
+// -- ?name=: loading a file reflects its name into the URL, Clear removes it
+await page.setInputFiles("#fileInput", FIXTURE_EML);
+await page.waitForFunction(() => document.body.classList.contains("viewing"), null, { timeout: 10000 });
+check("load: URL reflects ?name=sample.eml", await page.evaluate(() =>
+  new URLSearchParams(location.search).get("name")) === "sample.eml");
+await page.click("#btnClear");
+check("clear: ?name= removed from the URL", await page.evaluate(() =>
+  new URLSearchParams(location.search).get("name")) === null);
 await ctx.close();
+
+// -- direct visit with ?name=: empty-state names the last-viewed file
+const p3 = await browser.newContext().then((c) => c.newPage());
+hook(p3);
+await p3.goto(`http://localhost:${PORT}/?name=${encodeURIComponent("sample.eml")}`, { waitUntil: "load", timeout: 30000 });
+check("?name=: 'shared for' sub-line names the file", await p3.evaluate(() =>
+  /shared for/.test(document.querySelector(".empty-sub").textContent) &&
+  /sample\.eml/.test(document.querySelector(".empty-sub").textContent)));
+await p3.context().close();
+
+// -- ?name= carrying markup renders as TEXT, never parsed as HTML
+const p4 = await browser.newContext().then((c) => c.newPage());
+hook(p4);
+const HOSTILE_NAME = "<img src=x onerror=alert(1)>.eml";
+await p4.goto(`http://localhost:${PORT}/?name=${encodeURIComponent(HOSTILE_NAME)}`, { waitUntil: "load", timeout: 30000 });
+check("?name=: hostile markup shows as literal text, never parsed", await p4.evaluate((name) => {
+  const sub = document.querySelector(".empty-sub");
+  return sub.textContent.includes(name) && sub.querySelector("img") === null;
+}, HOSTILE_NAME));
+await p4.context().close();
 
 // -- fresh context with dark system scheme: must default dark
 const ctx2 = await browser.newContext({ colorScheme: "dark" });

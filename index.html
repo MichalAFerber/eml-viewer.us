@@ -2184,8 +2184,22 @@ return He}()
   // ---------- View orchestration ----------
   var emlMsg = null;
 
+  // Reflect the loaded file's name into the URL (?name=), so a bookmarked or
+  // shared link says what was being viewed. history.replaceState only, and
+  // URLSearchParams does its own percent-encoding — this never touches the
+  // DOM, so it carries no XSS risk on its own. The value becomes untrusted
+  // input again the moment it is read back (see the on-load block near the
+  // bottom of this script), and that path must stay textContent-only.
+  function syncQueryName(name){
+    var url = new URL(location.href);
+    if (name) url.searchParams.set("name", name);
+    else url.searchParams.delete("name");
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
+
   function show(text, name){
     currentName = name || "";
+    syncQueryName(currentName);
     rawText = String(text || "");
     emlMsg = null; parseErr = ""; codeBuiltFor = null; dataBuilt = false;
     try { emlMsg = EMLCORE.parseEml(rawText); }
@@ -2346,6 +2360,7 @@ return He}()
   }
   function showMsgNotice(name){
     currentName = name || ""; rawText = ""; emlMsg = null; hasRendered = false; dataBuilt = true;
+    syncQueryName(currentName);
     empty.hidden = true; body.classList.add("viewing");
     docTitle.textContent = name || BASE_TITLE; doc.title = BASE_TITLE;
     btnView.hidden = true; btnFormat.hidden = true;
@@ -2400,6 +2415,7 @@ return He}()
   }
   function clearAll(){
     rawText = ""; currentName = ""; renderKind = ""; parsed = null; parseErr = "";
+    syncQueryName("");
     dataBuilt = false; codeBuiltFor = null; beautified = false; beautifyCache = null; hasRendered = false;
     dataView.hidden = true; dataView.innerHTML = "";
     codeView.hidden = true; codeInner.textContent = ""; codeInner.className = "hljs"; gutter.textContent = "";
@@ -2708,6 +2724,25 @@ return He}()
         var fvhSubText = fvhSub.textContent;
         fvhSub.textContent = "Receiving \u201C\u2068" + fvhName + "\u2069\u201D\u2026";   // textContent only; FSI…PDI isolate the name
         setTimeout(function(){ fvhSub.textContent = fvhSubText; }, 10000);
+      }
+    }
+  }
+
+  // A bookmarked or shared link can carry the name of the file last viewed
+  // (?name=, set by syncQueryName above). No content is ever recoverable
+  // from a name alone — this only labels the empty state, and it never
+  // fetches or renders anything on the strength of it. Skipped when an
+  // #fvh hand-off is already customizing the same element.
+  if (!fvh && !currentName){
+    var qName = new URLSearchParams(location.search).get("name");
+    if (qName){
+      var lastSub = empty.querySelector(".empty-sub");
+      if (lastSub){
+        // Display-only, and it must stay that way: this string is read
+        // straight from the URL, so it is exactly as stranger-controlled as
+        // fvhName above. No fact is asserted about whether anyone actually
+        // viewed it — only that the link names it.
+        lastSub.textContent = "This link was shared for “⁨" + qName + "⁩”.";
       }
     }
   }
