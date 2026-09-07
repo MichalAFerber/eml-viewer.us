@@ -1,0 +1,231 @@
+# TGWAB PR draft gate—DEV-STANDARDS §4, the three-hand gate.
+#
+# Place at:  .github/workflows/pr-draft-gate.yml
+# Required status-check context:  pr-draft-gate  (the JOB name, not the workflow name)
+#
+# WHAT THIS CATCHES, and why the convention did not.
+#
+# The gate is: Sr Dev opens a DRAFT, DevOps marks it ready, Michal merges. Its
+# whole design argument is that draft is a *state* and therefore cannot be
+# skipped by forgetting. That argument is false at the one moment it matters.
+# `gh pr create` opens a PR ready, GitHub offers no way to force draft-on-open,
+# and a PR opened ready is merge-eligible the second it exists—the DevOps hand
+# is not pending, it is gone, and nothing anywhere says so.
+#
+# Measured 2026-09-06 over 221 merged PRs in 12 repos, all merged on or after the
+# 2026-08-30 ruling: 21 never entered draft. Six of those merged strictly after
+# the ruling day—`resizewizard-api` #42 and #43, `uploadwizard-app` #71,
+# `TGWAB/tgwab-account` #29, and `TGWAB/changelogs` #8 and #9. The convention
+# holds ~90% of the time on habit alone, which is exactly the failure shape this
+# estate keeps cataloguing: a control that works until the once someone is
+# concentrating.
+#
+# HOW IT DECIDES, and why it reads history rather than state.
+#
+# `pull_request.draft` is the CURRENT state, and a status check is keyed to a
+# commit: a later run overwrites an earlier one on the same SHA. A gate built on
+# the current flag is therefore launderable—open ready, convert to draft, convert
+# back, and the failure is overwritten by a pass. So this reads the PR's
+# state-change events instead, which are append-only:
+#
+#   GitHub emits `ready_for_review` ONLY on draft -> ready, and `convert_to_draft`
+#   ONLY on ready -> draft. The FIRST such event therefore says how the PR was
+#   OPENED, and nothing done afterwards can change it.
+#
+#     first is ready_for_review   -> opened as a draft            PASS
+#     first is convert_to_draft   -> opened ready, drafted later  FAIL
+#     no events, still a draft    -> opened as a draft            PASS
+#     no events, not a draft      -> opened ready, never drafted  FAIL
+#
+# WHAT THIS DOES NOT PROVE, stated here because a control nobody has bounded is
+# the thing this gate was already failing at.
+#
+# It does NOT prove DevOps reviewed anything. Every hand in the three-hand
+# gate—Sr Dev, DevOps, and the owner—acts through one GitHub credential, so
+# `ready_for_review.actor` equals the author on every PR in the estate and an
+# `actor != author` rule would refuse nothing. This check asserts only that the
+# PR passed through the state in which review was supposed to happen. That is
+# strictly less than the gate's stated design, and the job says so in its own
+# output on every run so the next reader cannot over-read it.
+#
+# The escape hatch is the `gate-skipped` label, and the label is deliberately a
+# confession rather than a permission: a gate with no declared way out gets
+# bypassed by deleting the gate, and a PR that must be labelled "skipped" to
+# merge leaves a greppable mark where a forgotten draft leaves none.
+#
+# THE LABEL MUST EXIST IN THE REPO BEFORE THE GATE IS MADE REQUIRED. `gh pr edit
+# --add-label` fails on a label that has not been created, so vendoring this
+# workflow without the label ships a gate whose only declared exit does not open.
+# Create it alongside the workflow:
+#
+#   gh label create gate-skipped -R <owner>/<repo> --color D93F0B \
+#     --description "This PR did not pass through the three-hand draft gate (DS §4)."
+
+#
+# `on: pull_request` (not `pull_request_target`) is deliberate: this reads event
+# metadata and the PR's own event list, never repository code, and needs no write
+# scope. There is no action to pin—the job is `gh api` and two shell steps.
+
+name: pr-draft-gate
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: pr-draft-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-draft-gate:                        # job name == the required status-check context
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # BOTH are required, measured rather than assumed: with `issues: read`
+      # alone, /issues/N/events returns 403 "Resource not accessible by
+      # integration" on a pull request. No write scope anywhere.
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Read this PR's state-change history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Quoted into the environment rather than interpolated into the script:
+          # `${{ }}` inside `run` is textual substitution straight into the shell.
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          set -euo pipefail
+
+          # The webhook can beat the REST API to consistency. That only matters
+          # on `ready_for_review`, where an empty list would read as "opened
+          # ready" and fail a PR that did everything right—a false red on the
+          # NORMAL path, which is the one failure that would teach people to
+          # ignore this check. Retry only in that case, and only briefly.
+          for attempt in 1 2 3 4 5; do
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/events" --paginate \
+              --jq '[.[] | {event, actor: .actor.login, created_at}]' > events.json
+            n=$(jq 'length' events.json)
+            if [ "$EVENT_ACTION" != "ready_for_review" ] || [ "$n" -gt 0 ]; then
+              break
+            fi
+            echo "events list empty on a ready_for_review event; retry ${attempt}/5"
+            sleep 3
+          done
+
+          echo "State-change events on this PR:"
+          jq -r '.[] | "  \(.created_at)  \(.event)  actor=\(.actor)"' events.json
+          jq -e 'length > 0' events.json >/dev/null || echo "  (none)"
+
+      - name: The PR MUST have been opened as a draft
+        env:
+          EVENTS: events.json
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # --- decision:begin ---
+          # Everything between these markers is a pure function of $EVENTS,
+          # $IS_DRAFT, $LABELS and $PR_NUMBER. In tgwab-standards,
+          # scripts/check-draft-gate.test.sh extracts this block from
+          # .github/workflows/pr-draft-gate.yml — the file that actually runs,
+          # not a copy of it — and executes it against synthetic histories.
+          # Guard 0 in that same suite separately holds that file byte-identical
+          # to templates/pr-draft-gate.yml, and it is guard 0, not the extraction,
+          # that makes the run evidence about the template this repo ships.
+          #
+          # That script does NOT travel with this file, and must not: a gate
+          # that depended on a script vendored alongside it could be disabled by
+          # not vendoring the script. So in every repo BUT tgwab-standards this
+          # block is verified by being byte-identical to the template, which is
+          # a claim about a file nothing here can check. scripts/check-gate-drift.sh
+          # checks it, centrally, and is the only thing that does.
+          set -euo pipefail
+
+          # Exact match on a comma-delimited list, so a label named
+          # "not-gate-skipped" cannot satisfy the check by substring.
+          case ",${LABELS}," in
+            *,gate-skipped,*)
+              echo "::notice title=Draft gate deliberately skipped::PR #${PR_NUMBER} carries 'gate-skipped'. It did not pass through the three-hand gate, and this label is the only record that it did not."
+              echo "SKIPPED by label: the three-hand gate was not enforced on this PR."
+              exit 0
+              ;;
+          esac
+
+          # Both spellings are matched on purpose. The webhook activity type is
+          # `converted_to_draft`; the issue-event is `convert_to_draft`. Matching
+          # both means a rename on either surface makes this gate FAIL a
+          # laundered PR rather than silently pass one.
+          first=$(jq -r '
+            [ .[] | select(.event == "ready_for_review"
+                        or .event == "convert_to_draft"
+                        or .event == "converted_to_draft") ] | .[0].event // "none"
+          ' "$EVENTS")
+
+          # Reported, never gated on—see the header. With one credential this is
+          # always the author, and a rule keyed to it would refuse nothing.
+          ready_actor=$(jq -r '
+            [ .[] | select(.event == "ready_for_review") ] | .[-1].actor // "—"
+          ' "$EVENTS")
+
+          case "$first" in
+            ready_for_review)
+              verdict=pass
+              reason="opened as a draft; marked ready for review by ${ready_actor}"
+              ;;
+            convert_to_draft|converted_to_draft)
+              verdict=fail
+              reason="opened READY and converted to draft afterwards"
+              ;;
+            none)
+              if [ "$IS_DRAFT" = "true" ]; then
+                verdict=pass
+                reason="opened as a draft and still a draft"
+              else
+                verdict=fail
+                reason="opened READY and has never been a draft"
+              fi
+              ;;
+            *)
+              # An event name this script does not know is not a pass. Failing
+              # closed here is the difference between a gate and a decoration.
+              verdict=fail
+              reason="unrecognised state-change event '${first}'"
+              ;;
+          esac
+
+          if [ "$verdict" = pass ]; then
+            echo "PR #${PR_NUMBER}: ${reason}."
+            echo "::notice title=Draft state only::This proves PR #${PR_NUMBER} passed through draft, the state in which DevOps review is supposed to happen. It does NOT prove anyone reviewed it: every agent acts through one GitHub credential, so 'marked ready by ${ready_actor}' is not evidence of a second hand (DS §4)."
+            exit 0
+          fi
+
+          echo "::error title=PR did not pass through the draft gate::PR #${PR_NUMBER} was ${reason}."
+          cat <<EOF
+
+          The three-hand gate is: Sr Dev opens a DRAFT, DevOps marks it ready,
+          Michal merges (DS §4). A PR opened ready is merge-eligible the moment
+          it exists, so the DevOps hand is not pending—it is bypassed, and
+          nothing else in the review surface shows that.
+
+          Converting this PR to a draft now does NOT clear this check. The gate
+          reads how the PR was OPENED, from append-only history, precisely so
+          the fix cannot be a four-second dance. Two ways out:
+
+            1. Reopen the work as a draft, which is the gate:
+                 gh pr close ${PR_NUMBER}
+                 git push -u origin HEAD
+                 gh pr create --draft --fill
+
+            2. If skipping the gate is deliberate, say so on the record:
+                 gh pr edit ${PR_NUMBER} --add-label gate-skipped
+               The label is a confession, not a permission. It is what a sweep
+               counts, and what review sees in the one place it is already
+               looking.
+
+          EOF
+          exit 1
+          # --- decision:end ---
