@@ -1,0 +1,11 @@
+{
+  "_comment": [
+    "DS \u00a715 \u2014 this repo's declaration of what the XSS rule covers.",
+    "Product source only: code that runs for a user."
+  ],
+  "covers": [
+    "app.js",
+    "eml-core.js"
+  ],
+  "why": "product JavaScript extracted from index.html into app.js, eml-core.js"
+}

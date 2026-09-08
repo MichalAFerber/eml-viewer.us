@@ -4,9 +4,14 @@
   "private": true,
   "description": "Single-file eml viewer (static, no build step). This package.json exists only for the CI harness tooling.",
   "scripts": {
-    "test": "node test/harness.mjs"
+    "test": "node test/harness.mjs",
+    "lint": "eslint ."
   },
   "devDependencies": {
-    "playwright": "^1.56.1"
-  }
+    "playwright": "^1.56.1",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.12.0"
+  },
+  "type": "module"
 }
