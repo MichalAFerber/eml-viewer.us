@@ -1,0 +1,76 @@
+# TGWAB dependency updates—DEV-STANDARDS §15.
+#
+# Place at:  .github/dependabot.yml
+#
+# Grouping caps a normal week at ~3 PRs instead of one per package—ungrouped
+# Dependabot is how automated updates get muted and then ignored.
+#
+# DO NOT use this for a pnpm-11 repo's npm dependencies (wizard-web). Dependabot
+# supports pnpm v7–v10 and cannot parse a pnpm 11 multi-document lockfile, so it
+# opens zero PRs while appearing configured. Use templates/renovate.json
+# there—this file's github-actions entry is still fine to keep alongside it.
+#
+# Class C Jekyll repos add a third entry with package-ecosystem: bundler.
+
+version: 2
+
+# A repo that consumes @tgwab/auth or @tgwab/billing (GitHub Packages, internal
+# to the TGWAB org) uncomments this block and the `registries:` line on the npm
+# entry below. Dependabot cannot use GITHUB_TOKEN for GitHub Packages today (the
+# automatic access GitHub shipped in June 2026 was rolled back, dependabot-core
+# #15415); without a registry entry every npm update job 401s on @tgwab/*,
+# records private_source_authentication_failure, and never proposes a bump—while
+# still opening PRs for everything else, so the gap does not show (tgwab-account
+# run 33459077936, 2026-09-01). The secret is a DEPENDABOT secret, set with
+# `gh secret set GH_PACKAGES_READ_TOKEN --app dependabot`—a store separate from
+# Actions secrets; a value set only for Actions is invisible here, and a missing
+# one fails every npm job before it starts. It holds a classic PAT with
+# read:packages and nothing else, with an expiration, filed in Proton Pass (§16),
+# and MUST exist before this is uncommented. `scope` is what generates the
+# registry mapping when no .npmrc is committed; never add `replaces-base`.
+# registries:
+#   github-packages:
+#     type: npm-registry
+#     url: https://npm.pkg.github.com
+#     scope: "@tgwab"
+#     token: ${{ secrets.GH_PACKAGES_READ_TOKEN }}
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 2
+    labels: [dependencies]
+    commit-message:
+      prefix: "chore(actions)"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /
+    # registries: [github-packages]   # @tgwab/* consumers—see the block above
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    labels: [dependencies]
+    commit-message:
+      prefix: "chore(deps)"
+    # Supply-chain filter: malicious versions are typically yanked within hours.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      npm-non-major:
+        patterns: ["*"]
+        update-types: [minor, patch]
+      npm-major:
+        patterns: ["*"]
+        update-types: [major]
