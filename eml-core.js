@@ -103,7 +103,7 @@
       var ln = lines[i].replace(/\r$/, "");
       if (ln === marker || ln === marker + "--") {
         if (cur !== null) parts.push(cur.join("\n"));
-        if (ln === marker + "--") { cur = null; break; }
+        if (ln === marker + "--") { break; }
         cur = [];
       } else if (cur !== null) cur.push(lines[i]);
     }

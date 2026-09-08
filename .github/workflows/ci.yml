@@ -30,6 +30,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # §15 gate: lint MUST run, and MUST fail when there is no lint to run.
+      # Body from tgwab-standards templates/ci.yml. Deliberately NOT
+      # `npm run lint --if-present`, which exits 0 when the script is absent and
+      # reports a passing lint that never ran.
+      - name: lint
+        run: |
+          set -euo pipefail
+          if [ -n "${LINT_OPT_OUT:-}" ]; then
+            echo "::notice title=lint opted out (§15)::${LINT_OPT_OUT}"
+            exit 0
+          fi
+          if ! node -e "process.exit((require('./package.json').scripts||{}).lint?0:1)"; then
+            echo "::error title=no lint script (§15)::CI MUST run lint. Add a \"lint\" script (eslint .) plus templates/eslint.config.js, or declare LINT_OPT_OUT with a reason on the ci job."
+            exit 1
+          fi
+          npm run lint
+
+      # §15 fixture: proves the XSS rule still fires and still reaches the
+      # product files named in test/fixtures/xss-lint-covers.json.
+      - name: DS §15 XSS lint fixture
+        run: node --test test/xss-lint-fixture.test.js
+
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
