@@ -53,8 +53,13 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || '8a0d49b1f3fdcdadec135562ec8a4fdc' }}
-        run: >
-          npx wrangler@4 pages deploy .
-          --project-name eml-web-viewer
-          --branch ${{ github.ref == 'refs/heads/main' && 'main' || github.head_ref }}
-          --commit-dirty=false
+          DEPLOY_BRANCH: ${{ github.ref == 'refs/heads/main' && 'main' || github.head_ref }}
+          COMMIT_HASH: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message || github.event.pull_request.title }}
+        run: |
+          npx wrangler@4 pages deploy . \
+            --project-name eml-web-viewer \
+            --branch "$DEPLOY_BRANCH" \
+            --commit-hash "$COMMIT_HASH" \
+            --commit-message "$COMMIT_MESSAGE" \
+            --commit-dirty=false
